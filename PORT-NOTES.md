@@ -1,20 +1,39 @@
 # PORT-NOTES — Clearly → Wisk sandbox port findings
 
-Consolidated from four parallel read-only exploration agents (2026 session).
-Fork: `schybo/clearly` @ `e79f602` ("[mac] feat: add Rich Text export (#412)"), upstream `Shpigford/clearly`.
-Checkout: `~/clarved/clearly` — independent of the Wisk repo; Wisk stays untouched until the decision gate.
+Consolidated from parallel read-only exploration agents (2026 session), re-verified
+against the tree at fork `schybo/clearly` @ `e79f602` ("[mac] feat: add Rich Text
+export (#412)"), upstream `Shpigford/clearly`.
+Checkout: `~/clarved/clearly` — independent of the Wisk repo; Wisk stays untouched
+until the decision gate.
 
-> §4 (data model & integration surface) is still being written by its exploration agent and will be appended when it lands.
+> v2 note: an earlier draft of this file described files that do not exist
+> (`SourceListView`, `MarkdownToolbar`, `WindowSplitView`, `EditorRootView`,
+> `DocumentBrowserView`, `OpenGraphFetcher`, `SettingsModel`). Every claim below is
+> re-verified with file:line citations against the current tree.
 
 ---
 
 ## TL;DR for the port
 
-1. **The composer engine is two classes with a tiny contract** — `MarkdownSyntaxHighlighter` (regex-driven, 100% attribute-only) plus an optional Mac gutter layer. No cmark, no DocumentGroup coupling inside the engine. Highly transplantable.
-2. **TextKit 1 everywhere, deliberately.** The engine requires a live `NSTextStorage` + `NSLayoutManager`; attribute edits are dead on TextKit 2's `NSTextContentStorage`. This is the repo's #1 documented invariant (`CLAUDE.md:93`). Wisk's current editor is TextKit 2 — the sandbox is a full pivot, not a retrofit.
-3. **QuickType-safe by construction:** zero programmatic content edits per keystroke. The visible string only ever changes from the user or IME. Three guards (marked-text gate, `pendingBindingUpdates`, `isHighlighting`) are load-bearing — port them together with the engine.
-4. **Rebranding to a sandbox app is mechanical** — bundle ids, product names, icons, signing team, Sparkle feed. No deep coupling between app shell and engine.
-5. **The data layer is thin** (DocumentGroup `.md` files, UserDefaults, no SwiftData/sync/attachments) — everything Wisk adds, Clearly lacks, so there is nothing to *undo* when supplanting Wisk systems.
+1. **The composer engine is two classes with a tiny contract** —
+   `MarkdownSyntaxHighlighter` (regex-driven, 100% attribute-only) plus an optional
+   Mac gutter/indent layer. No cmark, no DocumentGroup coupling inside the engine.
+   Already proven to run outside DocumentGroup by the scratchpad windows.
+2. **TextKit 1 everywhere, deliberately.** The engine requires a live `NSTextStorage`
+   + `NSLayoutManager`; attribute edits are dead on TextKit 2's
+   `NSTextContentStorage`. This is the repo's #1 documented invariant
+   (`CLAUDE.md:93`). Wisk's current editor is TextKit 2 — the sandbox is a full
+   pivot, not a retrofit.
+3. **QuickType-safe by construction:** zero programmatic content edits per
+   keystroke. The visible string only ever changes from the user or IME. Three
+   guards (marked-text gate, `pendingBindingUpdates`, re-entrancy flag) are
+   load-bearing — port them together with the engine.
+4. **Clearly has no note list, no tags, no buckets, no cross-document search.** The
+   system Files/NSDocument browser is the "list". WiskNext's primary navigation UI
+   is greenfield; what ports is the per-document experience.
+5. **Rebranding is mechanical but wide** — bundle ids (`com.sabotage.*`),
+   Shpigford's signing team, Sparkle, plists, icons, scripts. No deep coupling
+   between app shell and engine.
 
 ---
 
@@ -24,70 +43,155 @@ Checkout: `~/clarved/clearly` — independent of the Wisk repo; Wisk stays untou
 
 | Path | Role |
 |---|---|
-| `Clearly/` | macOS app source (editor, windows, commands) |
-| `Clearly/iOS/` | iOS app source (browser, editor, preview, extensions) |
-| `Shared/` | Cross-platform resources only — no shared Swift code |
-| `Packages/ClearlyCore/` | The shared engine package (SPM local package) |
+| `Clearly/` | macOS app source (editor hosts, windows, commands, scratchpads) |
+| `Clearly/iOS/` | iOS app source (editor, preview, find overlay, outline sheet, extensions) |
+| `Shared/` | Cross-platform web resources only — **no Swift code** |
+| `Packages/ClearlyCore/` | The shared engine package (SPM local package, 34 source files) |
 | `ClearlyQuickLook/` | macOS Quick Look app extension |
-| `scripts/` | notarize-mac.sh, notarize-ios.sh, install-local-mac.sh, gen-xcode.sh |
-| `website/` | Marketing site (clearly.md) — decoupled from the app |
-| `docs/` | Architecture docs incl. `markdown-rendering-architecture.md` |
+| `scripts/` | release.sh, release-appstore.sh, submit-appstore.sh, release-ios.sh, verify-entitlements.sh |
+| `website/` | Marketing site + Sparkle appcast (clearly.md) — decoupled from the app |
 | `project.yml` | XcodeGen manifest (Wisk uses the same generator — familiar) |
 
 ### Targets (project.yml)
 
-| Target | Platform | Type |
-|---|---|---|
-| `Clearly` | macOS 15+ | app |
-| `Clearly-iOS` | iOS 17+, device family 1,2 | app |
-| `ClearlyQuickLook` | macOS | app extension (Finder preview) |
-| `ClearlyPreview-iOS` | iOS | app extension |
-| `ClearlyThumbnail-iOS` | iOS | app extension |
+| Target | Platform | Type | Bundle ID (release) |
+|---|---|---|---|
+| `Clearly` | macOS 15+ | app | `com.sabotage.clearly` |
+| `Clearly-iOS` | iOS 17+, family 1,2 | app | `com.sabotage.clearly` (shared w/ Mac for Universal Purchase) |
+| `ClearlyQuickLook` | macOS | app extension | `com.sabotage.clearly.quicklook` |
+| `ClearlyPreview-iOS` | iOS | app extension | `com.sabotage.clearly.preview` |
+| `ClearlyThumbnail-iOS` | iOS | app extension | `com.sabotage.clearly.thumbnail` |
 
-- Bundle ids: `com.sabotage.clearly` (`.dev` for Debug, per-target suffixes for extensions). `DEVELOPMENT_TEAM: W33JZPPPFN` (Shpigford's — must change or build with `CODE_SIGNING_ALLOWED=NO`).
-- Mac and iOS version **independently** (Mac 3.3.0, iOS 2.1.0 in project.yml) — mirrors Wisk's dual-target scheme.
-- External SPM deps: `cmark-gfm` (read-only preview rendering only), `Sparkle` (Mac updater), `KeyboardShortcuts` (Mac global shortcuts).
-- **Local package `ClearlyCore`** is included in *all five* targets: 41 Swift files, ~11.2k LOC. Contents: `SyntaxHighlighter.swift` (composer), `MarkdownParser.swift`, `DocumentRender.swift` (markdown → HTML for preview), `DocumentURL.swift`, document thumbnail/preview types, `Extensions/` (MarkdownDocument, DocumentModel, SettingsModel, Theme, SwiftUIHelpers, OpenGraphFetcher), `Utilities/`.
+- Every Debug config overrides to a `.dev` bundle id and `"Clearly Dev"` product name.
+- `DEVELOPMENT_TEAM: W33JZPPPFN` (upstream's team) on all five targets — override or
+  build with `CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM=""`.
+- Mac and iOS version **independently** (Mac 3.3.0, iOS app 2.1.0, iOS extensions 2.0.0).
+- External deps: `cmark-gfm` (preview only — single import site
+  `MarkdownRenderer.swift:2`), `Sparkle` (Mac, `#if canImport(Sparkle)` guarded),
+  `KeyboardShortcuts` (Mac, scratchpad hotkey only).
+- ClearlyCore links into all targets **except** `ClearlyThumbnail-iOS`.
+- **No Xcode test targets exist.** The only automated suite is the SPM package's
+  `ClearlyCoreTests` (`swift test --package-path Packages/ClearlyCore`).
 
-### Boot sequence
+### ClearlyCore contents (all of it)
 
-- **Mac:** `ClearlyApp.swift` → `DocumentGroup(newDocument: MarkdownDocument.empty, editor: EditorRootView)` → `WindowSplitView` — `NavigationSplitView` with sidebar `SourceListView` and detail `MarkdownEditorView`.
-- **iOS:** `DocumentGroup(.markdown)` → `DocumentBrowserView` (file list) → `DocumentDetailView` hosting a `TabView`-style `MarkdownSegment` / `PreviewSegment` split with `MarkdownToolbar` above the keyboard.
+- `Platform/Platform.swift` — AppKit/UIKit typealiases; the package's only platform
+  divergence point.
+- `Rendering/` — `MarkdownSyntaxHighlighter.swift` (keystroke-time regex
+  highlighter), `MarkdownRenderer.swift` (cmark → HTML + post-processing),
+  `PreviewCSS.swift` (token palettes), `Theme.swift`, `PreviewUserScripts.swift`,
+  `MermaidSupport`/`MermaidLightboxSupport`/`SyntaxHighlightSupport`/`TableSupport`/
+  `WikilinkSupport`/`FrontmatterSupport`/`EmojiShortcodes`/`ATXHeadingPrefix`,
+  `LocalImageSupport.swift` (relative image paths + custom `clearly-file`
+  WKWebView scheme).
+- `State/` — `OpenDocument`, `FindState`, `ReplaceEngine`, `TextMatcher`,
+  `OutlineState`, `PositionSync` (editor↔preview scroll anchoring),
+  `JumpToLineState`, `StatusBarState`, `FoldStateStore`, `NavigationGuard`,
+  `ExternalFileWatcher` + `WatchExternalChangesModifier`.
+- `Editor/` — `ImagePasteService.swift` (pasted/dropped images → sibling
+  `<slug>-<N>.<ext>` files + markdown ref), `ImageDownloader.swift`.
+- `Diagnostics/` — `DiagnosticLog` (os.Logger subsystem hardcoded
+  `com.sabotage.clearly`), `BugReportURL` (hardcoded `Shpigford/clearly`),
+  `MemoryUsage`.
+- `Stats/MarkdownStats.swift`, `Limits.swift` (50 MB open cap, 20 MB image, 5 M-char
+  highlight bail).
 
-### Build-system notes
+### Entry points
 
-- `scripts/gen-xcode.sh` wraps `xcodegen` — the `.xcodeproj` is generated, not committed by hand (same workflow as Wisk).
-- Shared JS/CSS resources (mermaid, katex, highlight.js, svg-pan-zoom, fonts) are **duplicated in all five targets' source lists** as `buildPhase: resources`; folder-type resources use `type: folder`. Adding a shared resource means editing every target block.
-- `ExportOptions*.plist` at repo root are for release notarization; not needed for sandbox dev.
+- **Mac:** `@main ClearlyApp` at `Clearly/ClearlyApp.swift:433` —
+  `DocumentGroup(newDocument: MarkdownDocument()) { ContentView }` + `Settings`
+  scene + `MenuBarExtra("Scratchpads")`. `ClearlyAppDelegate` (`:13-430`) is ~400
+  lines of menubar-only activation / 'odoc' Apple-event interception.
+- **iOS:** `@main ClearlyApp_iOS` at `Clearly/iOS/ClearlyApp_iOS.swift:4` — an
+  8-line `DocumentGroup` body whose detail is `DocumentDetailBody`. The system
+  Files browser is the entry UI.
+- **Shared surface is tiny:** the only app-level file in both targets is
+  `Clearly/MarkdownDocument.swift` (29-line `FileDocument` wrapping
+  `text: String`, UTType `net.daringfireball.markdown`). Everything else shared
+  lives in ClearlyCore.
+
+### Build commands (this machine)
+
+```bash
+cd ~/clarved/clearly
+xcodegen generate   # .xcodeproj is gitignored; re-run after project.yml/source changes
+
+# Mac
+xcodebuild -project Clearly.xcodeproj -scheme Clearly -configuration Debug \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
+  DEVELOPMENT_TEAM="" build
+
+# iOS simulator
+xcodebuild -project Clearly.xcodeproj -scheme Clearly-iOS -configuration Debug \
+  -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" build
+
+# ClearlyCore unit suite
+swift test --package-path Packages/ClearlyCore
+```
+
+Baseline status: all three commands green at `e79f602` on this machine
+(2026-10-25; Mac needs xcodegen ≥ 2.46 — 2.45.2 mis-outputs `type: folder`
+resource paths as repo-root-relative).
 
 ### Rebrand checklist (Clearly → sandbox app, working name WiskNext)
 
-1. `project.yml`: `name:` → WiskNext; all `PRODUCT_BUNDLE_IDENTIFIER`s (`com.sabotage.clearly.*` → own id); `PRODUCT_NAME`s; `DEVELOPMENT_TEAM` → Brent's team.
-2. Debug-variant names ("Clearly Dev") and per-extension bundle-id suffixes.
-3. `Clearly/Info.plist` + `Clearly/iOS/Info-iOS.plist` display names, URL schemes.
-4. App icons: `Clearly/AppIcon` (macOS), `Clearly/iOS/AppIcon.icon` (iOS).
-5. Sparkle updater feed URL + EdDSA signing key — **drop or replace** for the sandbox (no auto-updates wanted).
-6. `ExportOptions-*.plist` — ignore for dev builds.
-7. Scripts: hardcoded app names/paths in `notarize-*.sh`, `install-local-mac.sh` (not needed pre-gate).
-8. Menu-bar strings/window titles ("Clearly") — sweep with grep at rebrand time.
-9. `ClearlyQuickLook` target name/ids.
-10. Keep `upstream` remote pointing at Shpigford/clearly for future pulls; fork remote is `schybo/clearly`.
+1. `project.yml`: `name:`, `bundleIdPrefix: com.sabotage`, 11 explicit
+   `PRODUCT_BUNDLE_IDENTIFIER`s, `PRODUCT_NAME`s, `DEVELOPMENT_TEAM`.
+2. Debug-variant names ("Clearly Dev") + per-extension bundle-id suffixes.
+3. Hand-maintained plists (`GENERATE_INFOPLIST_FILE: NO`): `Clearly/Info.plist`,
+   `Clearly/iOS/Info-iOS.plist`, extension plists — display names, `LSHandlerRank:
+   Owner`, exported UTI claims (`net.daringfireball.markdown` etc.).
+4. Icons: `Clearly/AppIcon.icon` (Icon Composer) + Mac menubar imageset.
+5. Sparkle: feed URL + `SUPublicEDKey` in Info.plist, `#if canImport(Sparkle)`
+   sites in `ClearlyApp.swift`/`SettingsView.swift` — **drop entirely** for the sandbox.
+6. Hardcoded identity strings: Logger subsystem + queue labels
+   (`DiagnosticLog.swift:5,21`, `FoldStateStore.swift:46`), bug-report repo
+   (`BugReportURL.swift:15`), Help/Settings links to clearly.md/Shpigford
+   (`ClearlyApp.swift:524,537`, `SettingsView.swift:188-190`), demo.md links.
+7. The `clearly-file` WKWebView scheme (`LocalImageSupport.swift:6`) — a string
+   constant, safe to rename.
+8. Scripts carry the brand (release/DMG/appcast) — irrelevant pre-gate.
+9. Keep `upstream` remote (Shpigford/clearly) for future pulls; origin is the fork.
+10. Load-bearing rebrand invariants: the LaunchServices/QuickLook claims and the
+    per-target resource duplication (shared web assets must be re-declared in every
+    target's resources).
 
 ---
 
 ## 2. Text composer / input pipeline  ⭐ the crown jewel
 
-**Engine file:** `Packages/ClearlyCore/Sources/ClearlyCore/Rendering/MarkdownSyntaxHighlighter.swift` (757 lines), shared verbatim by both platforms via `PlatformTextStorage`/`PlatformFont` typealiases (`Platform/Platform.swift:5-22`).
+**Engine file:** `Packages/ClearlyCore/Sources/ClearlyCore/Rendering/MarkdownSyntaxHighlighter.swift`
+(757 lines), shared verbatim by both platforms via
+`PlatformTextStorage`/`PlatformFont` typealiases (`Platform/Platform.swift`).
 
-**Model:** pure regex enumeration over the live string — ~24 precompiled `NSRegularExpression`s with paired `HighlightStyle`s (`:30-120`): frontmatter, fenced code, `$$` math, headings, emphasis, strikethrough, inline code, images/links, blockquotes, list markers, tasks, HR, `==highlight==`, footnotes, table rows, setext headings, HTML tags. No parse tree, no cmark in the editor path (cmark-gfm is preview-only). Consequence: editor styling and cmark preview can disagree on edge cases — accepted trade.
+**Model:** pure regex enumeration over the live string — ~24 precompiled
+`NSRegularExpression`s with paired `HighlightStyle`s: frontmatter, fenced code,
+`$$` math, headings, emphasis, strikethrough, inline code, images/links,
+blockquotes, list markers, tasks, HR, `==highlight==`, footnotes, table rows,
+setext headings, HTML tags. No parse tree, no cmark in the editor path (cmark-gfm
+is preview-only). Consequence: editor styling and cmark preview can disagree on
+edge cases — accepted trade.
 
-**Highlight application is 100% attribute-only.** Every entry point wraps work in `beginEditing()`/`endEditing()` and calls only `addAttributes`/`addAttribute`/`removeAttribute` on existing ranges. No `replaceCharacters`, no wipe-and-rewrite, no invisible markers. `**` stays visibly in the string, styled in a marker color.
+**Highlight application is 100% attribute-only.** Every entry point wraps work in
+`beginEditing()`/`endEditing()` and calls only `addAttribute(s)`/`removeAttribute`
+on existing ranges. No `replaceCharacters`, no wipe-and-rewrite, no invisible
+markers. `**` stays visibly in the string, styled in a marker color.
 
 **Range strategy: paragraph-scoped incremental with full-reparse fallbacks.**
-- `highlightAll(_:caller:)` (`:163-407`): base attributes full-range, all patterns full-range, collecting *protected ranges* (code/math/frontmatter) that suppress inner styling.
-- `highlightAround(_:editedRange:replacementLength:caller:)` (`:448-729`): expand post-edit range to paragraph via `paragraphRange(for:)`, reset + re-run patterns only there. >5 M-char paragraphs bail out (`Limits.swift:8`) to avoid catastrophic regex.
-- Edits touching a block delimiter (```` ``` ````, `$$`, `---`) set `needsFullHighlight` → host schedules a **deferred 0.3 s full re-highlight** while the paragraph still paints immediately.
-- Optimizations that matter on large docs: skip font reset when paragraph is already default-font ("avoids glyph regeneration, which is the main per-keystroke cost", `:507-524`); protected ranges shifted by edit delta instead of rebuilt (`:528-551`).
+- `highlightAll(_:caller:)` (`:163-407`): base attributes full-range, all patterns
+  full-range, collecting *protected ranges* (code/math/frontmatter) that suppress
+  inner styling.
+- `highlightAround(_:editedRange:replacementLength:caller:)` (`:448-729`): expand
+  post-edit range to paragraph via `paragraphRange(for:)`, reset + re-run patterns
+  only there. >5 M-char paragraphs bail out (`Limits.swift:8`).
+- Edits touching a block delimiter (```` ``` ````, `$$`, `---`) set
+  `needsFullHighlight` → host schedules a **deferred 0.3 s full re-highlight**
+  while the paragraph still paints immediately.
+- Optimizations that matter on large docs: skip font reset when the paragraph is
+  already default-font ("avoids glyph regeneration, which is the main
+  per-keystroke cost", `:507-524`); protected ranges shifted by edit delta instead
+  of rebuilt (`:528-551`).
 
 ### Keystroke lifecycle (the contract to port)
 
@@ -107,88 +211,183 @@ key event
 ```
 
 Platform hosts:
-- Mac: `EditorView.swift:611-714` (Coordinator), text view `ClearlyTextView.swift:47` inside a hand-built TextKit 1 stack (`MarkdownHeadingLayout.swift:206-215`).
-- Mac scratchpad (menu-bar windows): `ScratchpadEditorView.swift:151-177` — proves the engine runs outside DocumentGroup.
-- iOS: `EditorView_iOS.swift:411-477` + `ClearlyUITextView.swift:10` which forces TextKit 1 by passing a non-nil container to `super.init(frame:textContainer:)` (`:14-23`).
+- Mac: `EditorView.swift` Coordinator (`:382+`), text view `ClearlyTextView.swift:47`
+  inside a hand-built TextKit 1 stack (`MarkdownHeadingLayout.swift:206-215`).
+- iOS: `EditorView_iOS.swift:411-477` + `ClearlyUITextView.swift:8`, which forces
+  TextKit 1 by constructing its own `NSTextStorage → NSLayoutManager →
+  NSTextContainer` and calling `super.init(frame:textContainer:)` (`:13-24`).
+- Mac scratchpads: `ScratchpadEditorView.swift:20` — proves the engine runs outside
+  DocumentGroup.
 
 ### Why QuickType/autocorrect survive (the fix for Wisk's original bug)
 
-1. **Zero app-driven content edits per keystroke.** The input manager's model (marked ranges, undo, autocorrect candidates, selectedRange) is never invalidated. Autocorrect *replacements* arrive as normal user edits through `shouldChangeTextIn` and highlight correctly.
-2. **IME guards:** `markedTextRange == nil` gate before any content write (`EditorView_iOS.swift:44-52`), `hasMarkedText()` gate (`EditorView.swift:345`), stale-range validation with safe fallback to `highlightAll` (`MarkdownSyntaxHighlighter.swift:453-464`).
-3. **SwiftUI round-trip suppression:** `pendingBindingUpdates` counter so `updateNSView`/`updateUIView` never overwrite the text view mid-composition (`EditorView_iOS.swift:47,472-477`; `EditorView.swift:344`).
-4. **Where harmony couldn't be guaranteed, they disabled the rewriter:** iOS sets `autocorrectionType/smartQuotesType/smartDashesType/smartInsertDeleteType = .no` (`ClearlyUITextView.swift:32-35`); Mac disables quote/dash/text replacement (`EditorView.swift:87-89`). Spell check (overlay, non-rewriting) stays on.
+1. **Zero app-driven content edits per keystroke.** The input manager's model
+   (marked ranges, undo, autocorrect candidates, selectedRange) is never
+   invalidated. Autocorrect *replacements* arrive as normal user edits through
+   `shouldChangeTextIn` and highlight correctly.
+2. **IME guards:** `markedTextRange == nil` gate before any content write
+   (`EditorView_iOS.swift:44-52`), `hasMarkedText()` gate (`EditorView.swift:345`),
+   stale-range validation with safe fallback to `highlightAll`
+   (`MarkdownSyntaxHighlighter.swift:453-464`).
+3. **SwiftUI round-trip suppression:** `pendingBindingUpdates` counter so
+   `updateNSView`/`updateUIView` never overwrite the text view mid-composition
+   (`EditorView_iOS.swift:47,472-477`; `EditorView.swift:344-352`).
+4. **Where harmony couldn't be guaranteed, they disabled the rewriter:** iOS sets
+   `autocorrectionType/smartQuotesType/smartDashesType/smartInsertDeleteType = .no`
+   (`ClearlyUITextView.swift:33-37`); Mac disables quote/dash/text replacement
+   (`EditorView.swift:71-91`). Spell check (overlay, non-rewriting) stays on.
 
 ### Undo, cursor, scroll
 
-- Mac: **dedicated `UndoManager` per text view** (`EditorView.swift:397-406`) — SwiftUI DocumentGroup registers an undo per binding write which breaks NSTextView coalescing when shared (#390). Port this if the sandbox writes bindings per keystroke.
-- iOS: native UITextView undo; find/replace has its own grouped undo (`EditorView_iOS.swift:330-361`).
-- Selection is never restored during typing — attribute edits can't move it. Content paths (external load, paste) clamp/restore explicitly.
-- Scroll preserved around re-highlights (`EditorView.swift:635-666`); `scrollViewDidScroll` suppressed during highlighting (deadlock comment `:716-742`); repaint via visible-rect `setNeedsDisplay` (`:751-755`).
-- Document open: set text → `highlightAll`, delegate attached *after* (`EditorView.swift:115-123`); 50 MB open cap (`Limits.swift`).
+- Mac: **dedicated `UndoManager` per text view** (`EditorView.swift:395-406`) —
+  DocumentGroup registers an undo per binding write which breaks NSTextView
+  coalescing when shared (#390).
+- iOS: native UITextView undo; find/replace has its own grouped undo
+  (`EditorView_iOS.swift:330-361`).
+- Selection is never restored during typing — attribute edits can't move it.
+  Content paths (external load, paste) clamp/restore explicitly.
+- Scroll preserved around re-highlights (`EditorView.swift:635-666`);
+  `scrollViewDidScroll` suppressed during highlighting (`:716-742`); repaint via
+  visible-rect invalidation (`:751-755`).
+- Document open: set text → `highlightAll`, delegate attached *after*
+  (`EditorView.swift:115-123`); 50 MB open cap (`Limits.swift`).
 
 ### Engine ↔ host contract (what a host app must supply)
 
 1. A real TextKit 1 `NSTextStorage`.
-2. Edited range + replacement length captured from `shouldChangeTextIn` before the edit lands.
+2. Edited range + replacement length captured from `shouldChangeTextIn` before the
+   edit lands.
 3. A post-edit delegate callback to trigger `highlightAround`.
 4. A re-entrancy suppression flag for programmatic writes.
 
-That's it — no cmark, no model objects, no document reference. `Theme` + `Limits` are its only ClearlyCore dependencies.
+That's it — no cmark, no model objects, no document reference. `Theme` + `Limits`
+are its only ClearlyCore dependencies.
 
 ### Transplant risks for Wisk
 
-- **Attribute namespace collision:** the highlighter *resets* `.font/.foregroundColor/.paragraphStyle/.backgroundColor/.strikethroughStyle` per paragraph (`:507-524`). Wisk attachment placeholders living on those keys would be stripped per keystroke → must move Wisk attachment styling to custom `NSAttributedString.Key`s and add attachment ranges to the protected-ranges mechanism (`isInsideProtectedRange`, `:733`).
-- **TextKit 2 incompatibility** — Wisk's editor is TextKit 2; the sandbox is a deliberate pivot to TextKit 1.
-- **IME/SwiftUI guards are load-bearing** — each was added after a real bug; port together or reproduce those bugs.
-- **Regex semantics** — editor vs preview can disagree on nested emphasis edge cases.
-- **iOS smart features default off** — Wisk may want autocorrect ON; Clearly's evidence says replacement-style edits flow fine through the pipeline, so this is a choice, not a constraint.
+- **Attribute namespace collision:** the highlighter *resets*
+  `.font/.foregroundColor/.paragraphStyle/.backgroundColor/.strikethroughStyle`
+  per paragraph (`:507-524`). Wisk attachment placeholders living on those keys
+  would be stripped per keystroke → move Wisk attachment styling to custom
+  `NSAttributedString.Key`s and add attachment ranges to the protected-ranges
+  mechanism (`isInsideProtectedRange`, `:733`).
+- **TextKit 2 incompatibility** — Wisk's editor is TextKit 2; the sandbox is a
+  deliberate pivot to TextKit 1.
+- **IME/SwiftUI guards are load-bearing** — each was added after a real bug; port
+  together or reproduce those bugs.
+- **Regex semantics** — editor vs preview can disagree on nested emphasis edges.
+- **iOS smart features default off** — Wisk may want autocorrect ON; Clearly's
+  evidence says replacement-style edits flow fine through the pipeline, so this is
+  a choice, not a constraint.
 
 ---
 
 ## 3. UI layer
 
-### macOS (Clearly/, excluding iOS/)
+### macOS
 
-- `EditorRootView.swift` — root editor scene (DocumentGroup editor closure).
-- `WindowSplitView.swift` — `NavigationSplitView` shell: sidebar (`SourceListView`: recent documents, tags) + detail (`MarkdownEditorView`).
-- `MarkdownEditorView.swift` — bridges `EditorView` (NSViewRepresentable) with document state, find bar, TOC.
-- `EditorView.swift` — the `EditorView` NSViewRepresentable + Coordinator (composer host, §2), wraps `ClearlyTextView` + `LineNumberRulerView` (gutter) + `FindBarView` (⌘F, :394/:520 are the only `insertNewline` refs — no list auto-continuation by design).
-- `SearchView.swift` — in-document search UI; `TableOfContentsView.swift` — heading outline panel.
-- `PreviewView.swift` — read-only rendered preview (WKWebView).
-- `ScratchpadEditorView.swift` / `ScratchpadView.swift` — menu-bar quick-capture windows (separate editor instance of the same engine).
-- `SettingsView.swift` — Mac settings (theme, fonts, editor behavior); `StatsView.swift` — word/char counts.
-- Menu/keyboard commands: app-scoped via `KeyboardShortcuts` + standard `CommandMenu`s in `ClearlyApp.swift`.
-- Custom touches worth keeping: 2 pt custom caret (`ClearlyTextView.swift:52-70`), hanging `#` gutter via `MarkdownLayoutManager.setExtraLineFragmentRect` (`MarkdownHeadingLayout.swift:221-249`), non-contiguous layout for large docs (`EditorView.swift:109`).
+- **Window root:** `Clearly/ContentView.swift:8` — vertical `VStack`: `FindBarView`
+  (`:57-58`) → `JumpToLineBar` (`:61-62`) → `HStack { mainPane; OutlineView(240pt) }`
+  (`:104-107`) → hover-revealed `BottomToolbar` pill overlay (`:81-102`).
+- **Editor/preview ZStack:** `mainPane` (`:170-196`) keeps `EditorView` and
+  `PreviewView` **both always mounted**, toggled by `.opacity` + `.allowsHitTesting`
+  on `viewMode` — mode switch is instant, no re-mount. Blank docs never open in
+  preview (`:32-39`).
+- **There is no sidebar / note list.** The only side panel is the heading outline —
+  `OutlineView` (`Clearly/OutlineView.swift:4-57`) driven by `OutlineState`. The
+  "note list" is the system's (NSDocumentController recents / file picker).
+- **Formatting menu:** the `.textFormatting` menu is fully replaced — ⌘B, ⌘I,
+  ⇧⌘X, ⇧⌘H, ⌘K, ⇧⌘T, lists, quote, HR, table, code, math, page break
+  (`ClearlyApp.swift:488-521`), dispatched via `performFormattingCommand` →
+  `NSApp.sendAction` to the focused `ClearlyTextView` (`:798-801`).
+- **`ClearlyTextView`** (`Clearly/ClearlyTextView.swift:47`): 2 pt custom caret
+  (`:52-70`), paste/drop routing (URL-on-selection → markdown link; image file/URL
+  → sibling PNG via `ImagePasteService`; download placeholder flow, `:125-260`),
+  ⌘F interception (`:270-283`), all `@objc` format selectors (`:285-440`),
+  right-click "Text Format" submenu (`:442-505`).
+- **BottomToolbar** (`Clearly/BottomToolbar.swift:9`): floating glass pill —
+  Edit/Preview `ModePill`, live word/char count, Copy menu (Markdown/HTML/Rich
+  Text/Plain/Path/Name), outline toggle; `BottomHoverTracker` NSView with
+  nil `hitTest` (`:251-289`).
+- **Find/replace:** `FindBarView` (`Clearly/FindBarView.swift:4`) + `JumpToLineBar`;
+  Mac find paints layout-manager *temporary* attributes (`EditorView.swift:833-858`).
+- **Settings:** `Clearly/SettingsView.swift:9` — General/Scratchpads/About tabs;
+  appearance, launch behavior, default view mode, font-size 12–24, preview font
+  (SF/New York/SF Mono), content width, hide-frontmatter, menubar-only toggle,
+  launch-at-login, scratchpad hotkey recorder.
+- **Scratchpads:** `MenuBarExtra` → `ScratchpadMenuBar`/`ScratchpadManager`
+  (custom `NSPanel`) → `ScratchpadEditorView` reusing the same engine. File-backed
+  store with debounced writes (`ScratchpadStore.swift:29`). A parallel mini-app
+  (~1,200 lines) — candidate to cut for WiskNext.
+- **`ClearlyAppDelegate`** (`ClearlyApp.swift:13-430`): menubar-only activation
+  policy, 'odoc' multi-open → window tabs, launch behavior, quit-deferral hacks —
+  all specific to "an editor that lives in the menu bar"; not needed by WiskNext.
 
-### iOS (Clearly/iOS/)
+### iOS
 
-- `DocumentBrowserView.swift` — DocumentGroup browser customization (list of `.md` files).
-- `DocumentDetailView.swift` — editor screen; `MarkdownSegment` / `PreviewSegment` for the source/preview toggle; `InfoSheet.swift` for metadata.
-- `MarkdownToolbar.swift` — the formatting accessory above the keyboard (bold/italic/heading/list/link/quote/code insertion via `insertMarkdown`, `ClearlyUITextView.swift:128-137`).
-- `ClearlyUITextView.swift` + `EditorView_iOS.swift` — the composer host (§2). `keyboardDismissMode = .interactive`.
-- iPad: same single-column editor (device family 1,2; no split-editor adaptation).
+- **Entry:** `Clearly/iOS/ClearlyApp_iOS.swift:4-11` — bare `DocumentGroup`;
+  no custom browser, no settings scene.
+- **Root:** `Clearly/iOS/DocumentDetailBody.swift:7` — `FindOverlay_iOS` slides in
+  above content (`:19-23`); same both-panes-mounted ZStack (`:74-97`); toolbar
+  `.topBarTrailing`: Edit↔Preview eye/pencil, Find (⌘F), Outline → sheet
+  (`OutlineSheet_iOS`, `:68-70`).
+- **No keyboard accessory at all** — zero `inputAccessoryView`/`inputView` hits;
+  no formatting bar exists on iOS. Editing affordances: nav-bar buttons, find
+  overlay, paste/drop image handling.
+- **`ClearlyUITextView`** (`Clearly/iOS/ClearlyUITextView.swift:8`): TextKit 1
+  forced (`:13-24`), smart-input family off (`:33-37`),
+  `keyboardDismissMode = .interactive` (`:38`), paste override with async image
+  download + `replacePlaceholder` (`:61-168`).
 
-### Preview pipeline
+### Preview pipeline (WKWebView + cmark-gfm)
 
-- Editor → `DocumentRender` (ClearlyCore) uses **cmark-gfm** → HTML → `WKWebView` (`PreviewView` Mac / `PreviewSegment` iOS).
-- Shared/Resources carry the preview stack: `mermaid.min.js` (diagrams), `katex.min.js/.css` (math), `highlight.min.js` + `highlight-theme.css` (code), `svg-pan-zoom.min.js`, bundled fonts, plus `demo.md`/`getting-started.md` seeds.
-- Sync with editing: preview refresh is on segment switch / save cadence (see docs/markdown-rendering-architecture.md) — not per-keystroke.
+- `MarkdownRenderer.renderHTML` (`ClearlyCore/Rendering/MarkdownRenderer.swift:12-66`):
+  frontmatter extraction, math/wikilink protection, then
+  `cmark_gfm_markdown_to_html` (`CMARK_OPT_UNSAFE | FOOTNOTES | STRIKETHROUGH_…
+  | SOURCEPOS | TABLE_PREFER_STYLE_ATTRIBUTES`), then post-processing: KaTeX math,
+  wikilinks, `==mark==`, sup/sub, emoji, `[!TYPE]` callouts, `[TOC]` nav, table
+  captions, code-filename headers, `data-sourcepos` re-offset.
+- **Mac host:** `PreviewView.swift` builds the full HTML (`loadHTML`, `:173-355`)
+  with `PreviewCSS.css` tokens + KaTeX/mermaid/highlight.js guarded on content;
+  local images via the custom `clearly-file` scheme handler (`:81`).
+- **iOS host:** `PreviewView_iOS.swift:5` — same pipeline, smaller script set.
+- **The same stack is reused by:** `ClearlyQuickLook/PreviewProvider.swift:14-47`,
+  `Clearly/iOS/PreviewExtension/PreviewViewController.swift:24-45`,
+  `PDFExporter.swift:78`, `CopyActions.swift:39-63`.
+- **State exchange:** `ScrollBridge`/`SelectionBridge` keyed by `positionSyncID`
+  (`PositionSync.swift:17-43`); shared `FindState` closures; outline jump via
+  `data-sourcepos` + flash mark; DOM→native `taskToggle`/`linkClicked` messages.
+- **Known drift:** Mac and iOS `loadHTML` inline JS blocks have diverged (Mac has
+  scroll sync, selection capture, find marks, footnote popovers; iOS a subset).
+  During the port, consolidate into `PreviewUserScripts` rather than porting two
+  copies.
 
 ### Themes & typography
 
-- `Theme` lives in ClearlyCore (`Extensions/Theme.swift`): syntax colors, marker colors, background; consumed by both highlighter and preview CSS generation.
-- Font/size settings in SettingsModel; dark mode via appearance change → full `highlightAll` re-run (`EditorView.swift:314-323`).
+- Single source: `Theme` enum (`ClearlyCore/Rendering/Theme.swift:3`) — editor font
+  (monospaced system, 12 Mac / 17 iOS defaults), `Theme.Typography`,
+  `Theme.Spacing`, `Theme.Motion` tokens; ~22 dynamic colors from ClearlyCore's
+  `Colors.xcassets` (`Theme.swift:43-66`).
+- Preview palettes are **duplicated hex literals** in `PreviewCSS`
+  (`PreviewPalette.light/dark/print`) — CLAUDE.md documents manual sync as a rule.
+  A re-skin touches both `Colors.xcassets` and `PreviewPalette`.
+- Preview font size = editor size +4 (Mac) / +2 (iOS) — scattered across
+  `ContentView.swift:175`, `DocumentDetailBody.swift:88`, `Theme.swift:5-21`;
+  centralize on `Theme` while porting.
+- Editor re-applies theme + full `highlightAll` on appearance/font change
+  (`EditorView.swift:297-323`).
 
-### Extensions
+### Keep / replace assessment
 
-- `ClearlyQuickLook` (macOS): renders `.md` previews in Finder via the same `DocumentRender` + WKWebView stack.
-- `ClearlyPreview-iOS` / `ClearlyThumbnail-iOS`: share the same rendering path for Files-app previews/thumbnails.
-
-### PORT CONSIDERATIONS
-
-- **Editor-coupled (keep):** `EditorView`/`EditorView_iOS` hosts, `ClearlyTextView`/`ClearlyUITextView`, `MarkdownSyntaxHighlighter`, gutter, find bar, toolbar.
-- **Document-model-coupled (replace):** `DocumentGroup` wiring, `MarkdownDocument` file I/O, browser views → becomes Wisk SwiftData + list UI.
-- **Generic/reusable (keep or adapt):** preview pipeline (WKWebView + cmark + katex/mermaid/highlight), `Theme`, settings UI patterns, Quick Look extensions (nice-to-have later).
+- **Keep (clean, self-contained):** ClearlyCore render stack; editor engine trio
+  (`MarkdownSyntaxHighlighter` + `EditorView`/`EditorView_iOS` +
+  `ClearlyTextView`/`ClearlyUITextView`); find/replace state objects + two thin
+  bars; outline; `Theme` tokens; `BottomToolbar`; `SettingsView` patterns.
+- **Replace:** `ClearlyApp.swift` + `ClearlyAppDelegate` (menubar machinery),
+  `MarkdownDocument` + both `DocumentGroup` scenes, `DocumentWindowSizer`,
+  scratchpad suite (cut or port last).
+- **Greenfield:** note list / buckets / tags / cross-document search — Clearly
+  never had any of it.
 
 ---
 
@@ -196,31 +395,51 @@ That's it — no cmark, no model objects, no document reference. `Theme` + `Limi
 
 ### Document model
 
-- `Clearly/MarkdownDocument.swift` — `MarkdownDocument: FileDocument`, UTType `net.daringfireball.markdown`. Three initializers: `init()`, `init(text:)`, and `init(configuration:)` (the read path).
-- **Value semantics, not reference semantics**: SwiftUI's DocumentGroup treats the document as a value — **every edit produces a new `MarkdownDocument` instance** flowing through the `@Binding`. The editor host writes the full string back on each `textDidChange` (via `commitTextViewContents` → binding). There is no long-lived document object with incremental mutations.
-- Read/write: `fileWrapper`/`init(fileWrapper:)` round-trips plain UTF-8 markdown text. `documentURL` is passed through for the editor's per-document state (fold state, etc. keyed by URL).
-- **No autosave machinery of its own** — DocumentGroup + the system handle scheduling/coordination.
+- `Clearly/MarkdownDocument.swift` — `MarkdownDocument: FileDocument`, UTType
+  `net.daringfireball.markdown` (resolved via `UTType(...)` at `:7-8`). Three
+  initializers: `init()`, `init(text:)`, `init(configuration:)` (read path).
+- **Value semantics, not reference semantics:** DocumentGroup treats the document
+  as a value — every edit produces a new `MarkdownDocument` instance through the
+  `@Binding`. The editor host writes the full string back per `textDidChange`
+  (`commitTextViewContents` → `parent.text`, `EditorView.swift:712-714`). There is
+  no long-lived document object with incremental mutations.
+- Read/write: `fileWrapper`/`init(fileWrapper:)` round-trips plain UTF-8 markdown.
+- No autosave machinery of its own — DocumentGroup + the system schedule it.
 
-### Persistence inventory (what does NOT exist)
+### Persistence inventory
 
-- **No SwiftData, no CoreData, no UserDefaults persistence** (verified by grep — `@AppStorage`/`UserDefaults` absent from data paths; settings live in `SettingsModel` within the document-bound app state, not a global store).
-- **No database of any kind.** The Files-app document browser *is* the note list. No tags, no folders-of-its-own, no recents of its own (system recents only).
-- Scratchpads (Mac menu-bar quick notes) are **in-memory only** — lost on quit (`ScratchpadManager.swift`).
+- **Settings persist via UserDefaults/AppStorage**: `themePreference`,
+  `editorFontSize`, `previewFontFamily`, content width, line numbers, toolbar
+  visibility, scratchpad preferences, `DocumentWindowSizer` window frames.
+- **No SwiftData/CoreData, no database.** The system Files browser *is* the note
+  list. No tags, no folders-of-its-own, no recents of its own (system recents only).
+- Scratchpads (Mac menu-bar quick notes) are **file-backed** with debounced writes
+  + retention sweeps (`ScratchpadStore.swift:29`) — a separate mini store, not part
+  of the document model.
+- Per-document editor state (code-fold state) is keyed by **file URL**
+  (`FoldStateStore`).
 
 ### Attachments story
 
-- Images are referenced by markdown syntax `![alt](path)`; `LocalImageSupport` resolves **relative paths next to the document** for preview; remote URLs are fetched live.
-- `ImagePasteService` writes pasted images as **sibling PNG files** next to the `.md` and inserts the reference (Mac `ClearlyTextView.paste` :85-176, iOS `ClearlyUITextView.paste` :60-95, shared `ImageDownloader` with placeholder + `replacePlaceholder`).
-- No embedded binary resources, no asset management, no attachment attribution system.
+- Images are referenced by markdown syntax `![alt](path)`;
+  `ClearlyCore/Editor/ImagePasteService.swift` writes pasted/dropped images as
+  sibling `<slug>-<N>.<ext>` files **next to the `.md`** and inserts the reference
+  (Mac paste routing `ClearlyTextView.swift:125-260`; iOS
+  `ClearlyUITextView.swift:61-168`; remote URLs via `ImageDownloader` with a
+  `![](downloading…)<!--clearly-paste:token-->` placeholder + `replacePlaceholder`).
+- `ClearlyCore/Rendering/LocalImageSupport.swift` resolves relative paths for
+  preview and registers the `clearly-file` WKWebView URL scheme.
+- No embedded binary resources, no asset management, no attachment attribution.
 
 ### Search
 
-- In-document only: `FindState`/`TextMatcher`/`ReplaceEngine` (ClearlyCore). **No cross-document search exists.**
+- In-document only: `FindState`/`TextMatcher`/`ReplaceEngine` (ClearlyCore).
+  **No cross-document search exists.**
 
-### Extensions & networking
+### Networking
 
-- Quick Look/Preview/Thumbnail extensions each read the `.md` file URL directly and re-render via the shared `DocumentRender` + WKWebView stack — no shared cache or daemon.
-- Only networking in the app: `OpenGraphFetcher` (link previews) and `ImageDownloader` (pasted image URLs). No sync, no accounts, no API client.
+- Only `ImageDownloader` (pasted remote images). No sync, no accounts, no API
+  client, no analytics.
 
 ### Integration seams for Wisk systems
 
@@ -228,24 +447,44 @@ That's it — no cmark, no model objects, no document reference. `Theme` + `Limi
 |---|---|---|
 | SwiftData models | `MarkdownDocument.swift` + all `DocumentGroup` wiring in `ClearlyApp.swift` / `ClearlyApp_iOS.swift` | **Replace** — the editor host only needs a text string + binding; it never touches the file URL |
 | Firestore sync | the per-keystroke binding write (`commitTextViewContents` / `parent.text =`) | **Add** — enqueue to `SyncMutationWriter` at the same cadence Wisk's autosave uses (never `syncNow` from the typing path) |
-| Attachments | `ImagePasteService` + `LocalImageSupport` | **Replace** — route to Wisk's attachment pipeline; move attachment styling to custom `NSAttributedString.Key`s; register attachment ranges as protected ranges in the highlighter |
-| Buckets/tags/search | `SourceListView` (Mac) / `DocumentBrowserView` (iOS) | **Replace** — Wisk list UI + `NoteSearchEngine`; Clearly has no cross-doc search to build on |
-| AI parse client | none exists | **Add** — copy the `OpenGraphFetcher` pattern for the HTTP surface |
+| Attachments | `ImagePasteService` + `LocalImageSupport` + both paste overrides | **Replace** — route to Wisk's attachment pipeline; move attachment styling to custom `NSAttributedString.Key`s; register attachment ranges as protected ranges in the highlighter |
+| Buckets/tags/search | (no counterpart — greenfield UI) | **Add** — Wisk list UI + `Models/NoteSearchEngine.swift`; Clearly has nothing to build on |
+| AI parse client | none exists | **Add** — simple HTTP surface; Wisk's `Wisk/api` `parse-note` client ports directly |
 
 ### Highest-risk coupling found
 
-1. **Document identity is the string itself.** Wisk's sync/snapshot model keys off a stable note identity; Clearly's value-semantics document has none — the sandbox must introduce Wisk's `Note` identity as the source of truth and treat the editor as a transient view of `note.body`.
-2. **The file URL is the only key** Clearly's per-document state uses (fold state, scratchpads excluded) — swap to Wisk's note ID everywhere.
-3. DocumentGroup cannot be kept as the container for SwiftData+Firestore — the sandbox app's scene wiring is a rewrite of `ClearlyApp.swift`/`ClearlyApp_iOS.swift` entry points, while `EditorView`/`EditorView_iOS` hosts survive intact.
+1. **Document identity is the string itself.** Wisk's sync/snapshot model keys off
+   a stable note identity; Clearly's value-semantics document has none — the
+   sandbox must introduce Wisk's `Note` identity as the source of truth and treat
+   the editor as a transient view of `note.body`.
+2. **The file URL is the only key** Clearly's per-document state uses (fold state,
+   scratchpads) — swap to Wisk's note ID everywhere.
+3. DocumentGroup cannot remain the container for SwiftData+Firestore — the scene
+   wiring in `ClearlyApp.swift`/`ClearlyApp_iOS.swift` is a rewrite, while
+   `EditorView`/`EditorView_iOS` hosts survive intact.
 
 ---
 
 ## 5. What this means for WiskNext (synthesis)
 
-**Keep wholesale:** composer engine + host pattern (§2), preview stack (§3), Mac window chrome as the starting shell.
+**Keep wholesale:** composer engine + host pattern (§2), preview stack (§3), find/
+outline/theme, `BottomToolbar`, the Mac window chrome *minus* the menubar delegate.
 
-**Replace first:** data layer — DocumentGroup/.md → Wisk's SwiftData models + Firestore sync. The sandbox editor must learn to render from a SwiftData-backed string instead of a file URL (engine contract §2 confirms it needs no file URL — only an `NSTextStorage`).
+**Replace first:** data layer — DocumentGroup/.md → Wisk's SwiftData models +
+Firestore sync. The sandbox editor must learn to render from a SwiftData-backed
+string instead of a file URL (engine contract §2 confirms it needs no file URL —
+only an `NSTextStorage`).
 
-**Adapt:** image paste (Clearly writes sibling PNG files via `ImagePasteService` — route to Wisk's attachment pipeline + custom attribute keys + protected ranges), note list/organization UI (Wisk buckets/tags/search replaces `SourceListView` contents), AI parse client hooks at save/sync cadence.
+**Adapt:** image paste (route `ImagePasteService`'s sibling-PNG flow to Wisk's
+attachment pipeline + custom attribute keys + protected ranges), note
+list/organization UI (greenfield — Wisk buckets/tags/search), AI parse client
+hooks at save/sync cadence, consolidate the drifted Mac/iOS preview JS into
+`PreviewUserScripts`.
 
-**Risk register (top):** (1) TextKit 1 pivot invalidates Wisk's TextKit 2 typing-path fixes — by design; (2) attachment attribute collisions with the highlighter's per-paragraph resets; (3) SwiftUI binding round-trip guards must be ported exactly; (4) regex editor vs cmark preview disagreement; (5) clearly's own repo conventions (resource duplication across 5 targets) will bite during rebrand — follow checklist §1.
+**Risk register (top):** (1) TextKit 1 pivot invalidates Wisk's TextKit 2
+typing-path fixes — by design; (2) attachment attribute collisions with the
+highlighter's per-paragraph resets; (3) SwiftUI binding round-trip guards must be
+ported exactly; (4) regex editor vs cmark preview disagreement; (5) Clearly's
+resource bookkeeping (shared web assets re-declared per target) will bite during
+rebrand — follow checklist §1; (6) the sandbox app has no note list today, so
+WiskNext's primary navigation is net-new UI, not a port.
