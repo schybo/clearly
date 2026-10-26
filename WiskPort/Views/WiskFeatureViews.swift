@@ -746,7 +746,7 @@ struct NoteEditorView: View {
                     .background(Color.wiskInputBackground, in: RoundedRectangle(cornerRadius: Radius.button))
                     .foregroundStyle(Color.wiskSecondaryText)
             } else {
-                WiskRichMarkdownEditor(
+                WiskNextComposer(
                     markdownText: draftBodyBinding,
                     selectedMarkdownRange: selectedRangeBinding,
                     attachments: note.attachments,
@@ -789,7 +789,7 @@ struct NoteEditorView: View {
             // minHeight keeps the UITextView from collapsing to zero height
             // inside the outer ScrollView (the Bear canvas has no card chrome
             // to give it a frame).
-            WiskRichMarkdownEditor(
+            WiskNextComposer(
                 markdownText: draftBodyBinding,
                 selectedMarkdownRange: selectedRangeBinding,
                 attachments: note.attachments,
@@ -3564,7 +3564,7 @@ private struct StructuredSectionCard: View {
                 if section.mode == .checklist {
                     checklistBody
                 } else {
-                    WiskRichMarkdownEditor(
+                    WiskNextComposer(
                         markdownText: $bodyText,
                         selectedMarkdownRange: $richSelection,
                         attachments: attachments,

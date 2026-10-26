@@ -1239,7 +1239,7 @@ private struct MacNoteDraftBodyEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            WiskRichMarkdownEditor(
+            WiskNextComposer(
                 markdownText: markdownBinding,
                 selectedMarkdownRange: selectedRangeBinding,
                 attachments: attachments,
@@ -4066,7 +4066,7 @@ private struct MacStructuredNoteEditorView: View {
                         checklistRows(section)
                         checklistEntryEditor(section)
                     } else {
-                        WiskRichMarkdownEditor(
+                        WiskNextComposer(
                             markdownText: Binding(
                                 get: { bodyForSection(section.id) },
                                 set: { updateBody(section.id, $0) }
