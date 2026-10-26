@@ -2,7 +2,7 @@ import Foundation
 import os
 
 public enum DiagnosticLog {
-    public static let logger = Logger(subsystem: "com.sabotage.clearly", category: "lifecycle")
+    public static let logger = Logger(subsystem: "com.schybo.wisknext", category: "lifecycle")
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -13,12 +13,12 @@ public enum DiagnosticLog {
 
     private static let logFileURL: URL? = {
         guard let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
-        let appDir = dir.appendingPathComponent("Clearly")
+        let appDir = dir.appendingPathComponent("WiskNext")
         try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
         return appDir.appendingPathComponent("diagnostic.log")
     }()
 
-    private static let fileQueue = DispatchQueue(label: "com.sabotage.clearly.log")
+    private static let fileQueue = DispatchQueue(label: "com.schybo.wisknext.log")
 
     /// Log to both os_log and a persistent file that survives force-quit
     public static func log(_ message: String) {
@@ -58,10 +58,10 @@ public enum DiagnosticLog {
         let osVersion = ProcessInfo.processInfo.operatingSystemVersion
         let model = hardwareModel()
 
-        var output = "Clearly Diagnostic Log\n"
+        var output = "WiskNext Diagnostic Log\n"
             + String(repeating: "─", count: 60) + "\n"
             + "Exported:  \(dateFormatter.string(from: Date()))\n"
-            + "Clearly:   \(appVersion) (\(buildNumber))\n"
+            + "WiskNext:   \(appVersion) (\(buildNumber))\n"
             + "macOS:     \(osVersion.majorVersion).\(osVersion.minorVersion).\(osVersion.patchVersion)\n"
             + "Hardware:  \(model)\n"
             + "Memory:    \(ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024)) GB\n"

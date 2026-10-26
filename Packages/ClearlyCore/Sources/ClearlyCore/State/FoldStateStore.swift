@@ -43,7 +43,7 @@ public final class FoldStateStore: @unchecked Sendable {
     public static let shared = FoldStateStore(defaults: .standard)
 
     private let defaults: UserDefaults
-    private let queue = DispatchQueue(label: "com.sabotage.clearly.foldstate", attributes: .concurrent)
+    private let queue = DispatchQueue(label: "com.schybo.wisknext.foldstate", attributes: .concurrent)
 
     public init(defaults: UserDefaults) {
         self.defaults = defaults

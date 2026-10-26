@@ -130,39 +130,46 @@ struct ContentView: View {
             positionSyncID = UUID().uuidString
         }
         .watchExternalChanges(fileURL: fileURL, text: $document.text) { url in
-            // Sync SwiftUI's underlying NSDocument's fileModificationDate to
-            // the new on-disk mtime — without this, the next autosave detects
-            // a conflict and shows "could not be autosaved" dialog.
-            let target = url.standardizedFileURL
-            guard let doc = NSDocumentController.shared.documents.first(where: { $0.fileURL?.standardizedFileURL == target }) else { return }
-            if let mtime = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date {
-                doc.fileModificationDate = mtime
+            handleExternalFileWrite(url: url)
+        }
+    }
+
+    /// Extracted from the `watchExternalChanges` closure so the SwiftUI view
+    /// body type-checks in reasonable time once the module grows (the WiskNext
+    /// port links WiskPort alongside Clearly sources).
+    private func handleExternalFileWrite(url: URL) {
+        // Sync SwiftUI's underlying NSDocument's fileModificationDate to
+        // the new on-disk mtime — without this, the next autosave detects
+        // a conflict and shows "could not be autosaved" dialog.
+        let target = url.standardizedFileURL
+        guard let doc = NSDocumentController.shared.documents.first(where: { $0.fileURL?.standardizedFileURL == target }) else { return }
+        if let mtime = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date {
+            doc.fileModificationDate = mtime
+        }
+        // The reload isn't a user edit: the new content is already on
+        // disk, so the window must not show the edited dot or prompt to
+        // save on close (#387). SwiftUI registers the binding write as a
+        // change during a later view update — next runloop turn when the
+        // app is frontmost, but deferred until activation when the change
+        // arrived while backgrounded (the common Terminal-then-switch-back
+        // case). Clear after both, guarded on the text still matching the
+        // reloaded disk content so real user edits are never wiped.
+        let appliedText = document.text
+        let clearIfUnchanged = {
+            if document.text == appliedText {
+                doc.updateChangeCount(.changeCleared)
             }
-            // The reload isn't a user edit: the new content is already on
-            // disk, so the window must not show the edited dot or prompt to
-            // save on close (#387). SwiftUI registers the binding write as a
-            // change during a later view update — next runloop turn when the
-            // app is frontmost, but deferred until activation when the change
-            // arrived while backgrounded (the common Terminal-then-switch-back
-            // case). Clear after both, guarded on the text still matching the
-            // reloaded disk content so real user edits are never wiped.
-            let appliedText = document.text
-            let clearIfUnchanged = {
-                if document.text == appliedText {
-                    doc.updateChangeCount(.changeCleared)
-                }
-            }
-            DispatchQueue.main.async(execute: clearIfUnchanged)
-            // A frontmost app has no activation pending, so keeping this
-            // observer would retain the document until a later app switch.
-            guard !NSApplication.shared.isActive else { return }
-            var token: NSObjectProtocol?
-            token = NotificationCenter.default.addObserver(
-                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
-            ) { _ in
-                if let token { NotificationCenter.default.removeObserver(token) }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: clearIfUnchanged)
-            }
+        }
+        DispatchQueue.main.async(execute: clearIfUnchanged)
+        // A frontmost app has no activation pending, so keeping this
+        // observer would retain the document until a later app switch.
+        guard !NSApplication.shared.isActive else { return }
+        var token: NSObjectProtocol?
+        token = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { _ in
+            if let token { NotificationCenter.default.removeObserver(token) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: clearIfUnchanged)
         }
     }
 

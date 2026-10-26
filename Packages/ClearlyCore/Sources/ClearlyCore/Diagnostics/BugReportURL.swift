@@ -12,7 +12,7 @@ public enum BugReportURL {
         appVersion: String,
         osVersion: String,
         device: String? = nil,
-        repo: String = "Shpigford/clearly"
+        repo: String = "schybo/clearly"
     ) -> URL {
         var components = URLComponents(string: "https://github.com/\(repo)/issues/new")!
         var items: [URLQueryItem] = [

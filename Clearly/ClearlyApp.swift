@@ -520,9 +520,6 @@ struct ClearlyApp: App {
                 Button("Page Break") { performFormattingCommand(selector: #selector(ClearlyTextView.insertPageBreak(_:))) }
             }
             CommandGroup(replacing: .help) {
-                Button("Clearly Help") {
-                    NSWorkspace.shared.open(URL(string: "https://github.com/Shpigford/clearly/issues")!)
-                }
                 Button("Report a Bug…") {
                     let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?"
                     let build = (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "?"
@@ -532,9 +529,6 @@ struct ClearlyApp: App {
                         osVersion: ProcessInfo.processInfo.operatingSystemVersionString
                     )
                     NSWorkspace.shared.open(url)
-                }
-                Button("What's New…") {
-                    NSWorkspace.shared.open(URL(string: "https://clearly.md/changelog")!)
                 }
                 Divider()
                 Button("Sample Document") {
@@ -546,7 +540,7 @@ struct ClearlyApp: App {
                         let logText = try DiagnosticLog.exportRecentLogs()
                         let panel = NSSavePanel()
                         panel.allowedContentTypes = [.plainText]
-                        panel.nameFieldStringValue = "Clearly-Diagnostic-Log.txt"
+                        panel.nameFieldStringValue = "WiskNext-Diagnostic-Log.txt"
                         guard panel.runModal() == .OK, let url = panel.url else { return }
                         try logText.write(to: url, atomically: true, encoding: .utf8)
                     } catch {
@@ -559,7 +553,7 @@ struct ClearlyApp: App {
 
         Settings {
             #if canImport(Sparkle)
-            SettingsView(updater: updaterController.updater)
+            ClearlySettingsView(updater: updaterController.updater)
                 .preferredColorScheme(resolvedColorScheme)
             #else
             SettingsView()
@@ -619,56 +613,6 @@ struct SettingsWindowObserver: NSViewRepresentable {
 
 // MARK: - Focused-value keys (per-document menu binding)
 
-private struct FindStateKey: FocusedValueKey {
-    typealias Value = FindState
-}
-
-private struct OutlineStateKey: FocusedValueKey {
-    typealias Value = OutlineState
-}
-
-private struct ViewModeKey: FocusedValueKey {
-    typealias Value = Binding<ViewMode>
-}
-
-private struct ExportPDFActionKey: FocusedValueKey {
-    typealias Value = () -> Void
-}
-
-private struct ExportRichTextActionKey: FocusedValueKey {
-    typealias Value = () -> Void
-}
-
-private struct PrintDocumentActionKey: FocusedValueKey {
-    typealias Value = () -> Void
-}
-
-extension FocusedValues {
-    var findState: FindState? {
-        get { self[FindStateKey.self] }
-        set { self[FindStateKey.self] = newValue }
-    }
-    var outlineState: OutlineState? {
-        get { self[OutlineStateKey.self] }
-        set { self[OutlineStateKey.self] = newValue }
-    }
-    var viewMode: Binding<ViewMode>? {
-        get { self[ViewModeKey.self] }
-        set { self[ViewModeKey.self] = newValue }
-    }
-    var exportPDFAction: (() -> Void)? {
-        get { self[ExportPDFActionKey.self] }
-        set { self[ExportPDFActionKey.self] = newValue }
-    }
-    var exportRichTextAction: (() -> Void)? {
-        get { self[ExportRichTextActionKey.self] }
-        set { self[ExportRichTextActionKey.self] = newValue }
-    }
-    var printDocumentAction: (() -> Void)? {
-        get { self[PrintDocumentActionKey.self] }
-        set { self[PrintDocumentActionKey.self] = newValue }
-    }
-}
 
 // MARK: - Per-document command views
 

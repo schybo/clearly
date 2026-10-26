@@ -6,7 +6,7 @@ import ServiceManagement
 import Sparkle
 #endif
 
-struct SettingsView: View {
+struct ClearlySettingsView: View {
     #if canImport(Sparkle)
     let updater: SPUUpdater
     #endif
@@ -177,7 +177,7 @@ private struct AboutView: View {
                     .resizable()
                     .frame(width: 96, height: 96)
             }
-            Text("Clearly")
+            Text("WiskNext")
                 .font(.title2.weight(.semibold))
             Text("Version \(version) (\(build))")
                 .font(.callout)
@@ -185,12 +185,10 @@ private struct AboutView: View {
             Divider()
                 .padding(.horizontal, 60)
             VStack(spacing: 4) {
-                Link("Website", destination: URL(string: "https://clearly.md")!)
-                Link("Changelog", destination: URL(string: "https://clearly.md/changelog")!)
-                Link("Report a Bug", destination: URL(string: "https://github.com/Shpigford/clearly/issues")!)
+                Link("Report a Bug", destination: URL(string: "https://github.com/schybo/clearly/issues")!)
             }
             .font(.callout)
-            Text("© Sabotage Media")
+            Text("© Clarved")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 4)

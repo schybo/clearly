@@ -2,7 +2,7 @@ import Foundation
 import WebKit
 
 public enum LocalImageSupport {
-    public static let scheme = "clearly-file"
+    public static let scheme = "wisk-file"
 
     public static func fileURLKeyFragment(_ fileURL: URL?) -> String {
         fileURL?.path ?? ""
