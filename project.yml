@@ -102,7 +102,9 @@ targets:
         Debug:
           PRODUCT_BUNDLE_IDENTIFIER: com.schybo.wisknext.dev
           PRODUCT_NAME: "WiskNext Dev"
-          CODE_SIGN_STYLE: Automatic
+          CODE_SIGN_STYLE: Manual
+          PROVISIONING_PROFILE_SPECIFIER: "WiskNext Dev Mac Dev 2"
+          CODE_SIGN_IDENTITY: "Apple Development"
         Release:
           CODE_SIGN_STYLE: Automatic
 

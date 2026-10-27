@@ -50,9 +50,9 @@
 		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.googleusercontent.apps.973911751740-ub1lqdjbmn8i33200lq3keisq1116cei</string>
+				<string>com.googleusercontent.apps.973911751740-ivai5dudu9c0k2gfsfl1o1i6mko09a04</string>
 			</array>
-			<key>CFBundleURLTypeIdentifier</key>
+			<key>CFBundleURLName</key>
 			<string>com.schybo.wisknext.google</string>
 		</dict>
 	</array>
