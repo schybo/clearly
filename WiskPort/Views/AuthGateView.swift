@@ -1,5 +1,4 @@
 import AuthenticationServices
-import GoogleSignInSwift
 import SwiftUI
 
 #if os(macOS)
@@ -189,11 +188,9 @@ struct AuthGateView: View {
                     }
                 } else {
                     HStack(spacing: Spacing.sm) {
-                        GoogleSignInButton(scheme: .light, style: .icon, state: .normal) {}
-                            .frame(width: 24, height: 24)
-                            .clipped()
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
+                        GoogleGIcon()
+                        .frame(width: 22, height: 22)
+                        .accessibilityHidden(true)
                         Text("Continue with Google")
                             .font(AppFont.buttonLabel)
                             .lineLimit(2)
@@ -364,10 +361,8 @@ struct AuthGateView: View {
                     }
 
                 HStack(spacing: 8) {
-                    GoogleSignInButton(scheme: .light, style: .icon, state: .normal) {}
-                        .frame(width: 20, height: 20)
-                        .clipped()
-                        .allowsHitTesting(false)
+                    GoogleGIcon()
+                        .frame(width: 18, height: 18)
                         .accessibilityHidden(true)
                     Text("Continue with Google")
                         .font(.system(size: 13, weight: .medium))

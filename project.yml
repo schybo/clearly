@@ -83,8 +83,6 @@ targets:
         product: FirebaseStorage
       - package: GoogleSignIn
         product: GoogleSignIn
-      - package: GoogleSignIn
-        product: GoogleSignInSwift
       - target: WiskNextQuickLook
         embed: true
     settings:
@@ -152,8 +150,6 @@ targets:
         product: FirebaseStorage
       - package: GoogleSignIn
         product: GoogleSignIn
-      - package: GoogleSignIn
-        product: GoogleSignInSwift
       - target: WiskNextPreview-iOS
         embed: true
       - target: WiskNextThumbnail-iOS
